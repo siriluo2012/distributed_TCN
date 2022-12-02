@@ -59,38 +59,47 @@ def loadData(path, batch_size=32):
     x_train        = x[:train_range,:,:]
     y_train        = y[:train_range,:,:]
 
-    mod = x_train.shape[0] % batch_size
+    mod = x_train.shape[0] % (batch_size * ngpus)
     x_train = x_train[:-mod, :, :]
     y_train = y_train[0:-mod, :, :]
 
     x_val        = x[train_range:,:,:]
     y_val        = y[train_range:,:,:]
 
-    mod = x_val.shape[0] % batch_size
+    mod = x_val.shape[0] % (batch_size * ngpus)
     x_val = x_val[:-mod, :, :]
     y_val = y_val[:-mod, :, :]
 
     return x_train, y_train, x_val, y_val
 
 def get_compiled_model(batch_size=32, timesteps = 101, input_dim = 2):
+
     batch_size, timesteps, input_dim = batch_size, timesteps, input_dim
+
     i = Input(batch_shape=(batch_size, timesteps, input_dim))
-    o = TCN(nb_filters=64, nb_stacks=1, dilations=(1, 2, 4, 8, 16), 
+
+    o = TCN(nb_filters=64, nb_stacks=1, dilations=(1, 2, 4, 8, 16),
           dropout_rate=0.0, kernel_size=7, kernel_initializer='glorot_uniform',
-          use_batch_norm=False, use_layer_norm=False, padding='causal', activation='relu', 
-          return_sequences=True, use_skip_connections=True)(i) 
-    o = TCN(nb_filters=128, nb_stacks=1, dilations=(1, 2, 4, 8, 16, 32), 
+          use_batch_norm=False, use_layer_norm=False, padding='causal', activation='relu',
+          return_sequences=True, use_skip_connections=True)(i)
+
+    o = TCN(nb_filters=128, nb_stacks=1, dilations=(1, 2, 4, 8, 16, 32),
           dropout_rate=0.0, kernel_size=4, kernel_initializer='glorot_uniform',
-          use_batch_norm=False, use_layer_norm=False, padding='causal', activation='relu', 
+          use_batch_norm=False, use_layer_norm=False, padding='causal', activation='relu',
           return_sequences=True, use_skip_connections=True)(o)
-    o = TCN(nb_filters=256, nb_stacks=1, dilations=(1, 2, 4, 8, 16, 32, 64), 
+
+    o = TCN(nb_filters=256, nb_stacks=1, dilations=(1, 2, 4, 8, 16, 32, 64),
           dropout_rate=0.0, kernel_size=2, kernel_initializer='glorot_uniform',
-          use_batch_norm=False, use_layer_norm=False, padding='causal', activation='relu', 
+          use_batch_norm=False, use_layer_norm=False, padding='causal', activation='relu',
           return_sequences=True, use_skip_connections=True)(o)  # The TCN layers are here.
+
     o = TimeDistributed(Dense(8))(o)
     m = Model(inputs=[i], outputs=[o])
+
     optimizer = keras_optimizers.Adam(learning_rate=0.001, clipnorm=1.)
+
     m.compile(optimizer=optimizer, loss='mean_absolute_error', metrics=['mse'])
+
     return m
 
 
@@ -99,38 +108,40 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--dataPath', type=str, default='/home/shirui/student_consulting/seid_distributed/')
-    
     args = parser.parse_args()
-    
+
     epochs = args.epochs
     batch_size = args.batch_size
     path = args.dataPath
 
-    x_train, y_train, x_val, y_val = loadData(path, batch_size)
 
     # set up the distributed training
 
-    devices = tf.config.list_physical_devices(device_type = 'GPU')
-    devices_names = [d.name.split('e:')[1] for d in devices]
-
     gpus = tf.config.list_physical_devices('GPU')
+    ngpus = len(gpus)
     devices_names = [d.name.split('e:')[1] for d in gpus]
+
     strategy = tf.distribute.MirroredStrategy(devices=devices_names)
     with strategy.scope():
         model = get_compiled_model(batch_size=batch_size)
-    
+
     # create batch dataset
+    x_train, y_train, x_val, y_val = loadData(path, batch_size)
+
     BATCH_SIZE_PER_REPLICA = batch_size
     BATCH_SIZE = BATCH_SIZE_PER_REPLICA * strategy.num_replicas_in_sync
-    BUFFER_SIZE = 10000 
+    BUFFER_SIZE = 10000
 
-    train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train)).cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
-    val_dataset = tf.data.Dataset.from_tensor_slices((x_val, y_val)).cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+    train_dataset = tf.data.Dataset.from_tensor_slices((x_train,  y_train)).shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+    val_dataset = tf.data.Dataset.from_tensor_slices((x_val, y_val)).shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 
-    # start training 
+    #train_dist_dataset = strategy.experimental_distribute_dataset(train_dataset)
+    #val_dist_dataset = strategy.experimental_distribute_dataset(val_dataset)
+
+    # start training
     t0 = time.time()
 
-    model.fit(train_dataset, epochs=epochs, validation_data=val_dataset, verbose=2) 
+    model.fit(train_dataset, epochs=epochs, validation_data=val_dataset, verbose=2)
     total_time = time.time() - t0
 
     print('total time spent on training: ', total_time)
