@@ -4,7 +4,7 @@
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
-#SBATCH --cores-per-socket=10
+#SBATCH --cores-per-socket=20
 #SBATCH --threads-per-core=4
 #SBATCH --sockets-per-node=1
 #SBATCH --mem-per-cpu=1200
@@ -16,5 +16,5 @@ module load conda_base
 
 conda activate shirui_env
 
-python ./TCN_distributed.py --epochs 20 --batch_size 32 --dataPath '/home/shirui/student_consulting/seid_distributed/'
+python ./TCN_distributed.py --epochs 20 --batch_size 64 --dataPath '/home/shirui/student_consulting/seid_distributed/'
 
